@@ -1,0 +1,39 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Results and outputs
+results/
+*.json
+*.pkl
+*.npy
+*.npz
+*.pdf
+*.png
+
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+
+# Claude Code
+.claude/
