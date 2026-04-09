@@ -1,61 +1,73 @@
 # Bandit Algorithm Project Workflow
 
-## 워크플로우 개요
+## Workflow Overview
 
-이 프로젝트는 **3단계 멀티에이전트 워크플로우**를 따릅니다:
+This project follows a **3-stage multi-agent workflow**:
 
 ```
-[Planner] → ([Developer] ⇄ [Reviewer]  (최대 5 사이클)) → [Completion]
+[sprint-planner] → ([developer] ⇄ [code-reviewer]  (max 5 cycles)) → [Completion]
 ```
 
-각 역할은 명확하게 분리되어 있으며, Developer-Reviewer 사이클을 통해 품질을 보장합니다.
+Each role is strictly separated. The developer-reviewer cycle enforces quality before any task is marked complete.
 
-각 에이전트의 역할 정의는 `.claude/agents/`를 참고하세요.
+Agent role definitions live in `.claude/agents/`. Each agent reads `prompts/constitution.md` as its first step.
 
-## 에이전트 호출 방법
+## Invoking Agents Directly
 
-**직접 지정**:
 ```
-@planner Sprint N 기획해줘
-@developer Task N.M 구현해줘
-@reviewer 이 코드 검토해줘
-```
-
-**오케스트레이션 (메인 Claude에게 요청)**:
-```
-Sprint N 수행해
+@sprint-planner  Plan Sprint N — <brief goal description>
+@developer       Implement Task N.M — <brief description>
+@code-reviewer   Review Task N.M implementation
 ```
 
-> 서브에이전트는 독립된 컨텍스트로 실행됩니다. 각 에이전트 호출 시 어떤 Sprint/Task인지 명시하세요.
+> Subagents run in isolated contexts. Always specify which Sprint/Task is being worked on in the prompt, and include all necessary context explicitly — do not assume the agent has memory of prior steps.
 
-## 오케스트레이션 절차
+## Orchestration Procedure
 
-메인 Claude가 Sprint를 자동 실행할 때 따르는 절차입니다.
+When the main Claude orchestrates a full sprint run (e.g., user says "Run Sprint N"), follow these steps.
 
-### 1단계: Sprint Spec 읽기
+### Step 1: Read the Sprint Spec
 
-`prompts/sprints/spec/sprintN.md`를 읽어 Task 목록과 실행 순서를 확인합니다.
+Read `prompts/sprints/spec/sprintN.md` to extract:
+- Sprint Goal
+- Full task list
+- Execution order and dependency graph (parallel vs. sequential tasks)
 
-### 2단계: Task 순서대로 실행
+### Step 2: Execute Tasks in Order
 
-각 Task에 대해 Developer → Reviewer 사이클을 돌립니다.
+For each task, run a developer → code-reviewer cycle.
 
-**Developer 호출 시 프롬프트에 포함할 것**:
-- Sprint 번호 및 Task 번호/제목
-- Task 전체 내용 (spec에서 복사)
-- 선행 Task 결과물 파일 경로 (있는 경우)
+**When calling the `developer` agent, include:**
+- Sprint number and Task number/title
+- Full task content copied from the spec (description, inputs/outputs, acceptance criteria)
+- File paths of any prerequisite task outputs (if applicable)
+- Path to any associated detail document under `prompts/sprints/details/` (if one exists)
 
-**Reviewer 호출 시 프롬프트에 포함할 것**:
-- Sprint 번호 및 Task 번호/제목
-- Developer가 변경/생성한 파일 목록
-- Sprint spec 파일 경로 (`prompts/sprints/spec/sprintN.md`)
+**When calling the `code-reviewer` agent, include:**
+- Sprint number and Task number/title
+- List of files changed or created by the developer
+- Path to the sprint spec file (`prompts/sprints/spec/sprintN.md`)
+- Developer's implementation summary (if provided)
 
-### 3단계: 결과 처리
+### Step 3: Handle Results
 
-| 결과 | 처리 |
-|------|------|
-| ✅ APPROVED | 다음 Task로 진행 |
-| ❌ BLOCKED | Developer 재호출 — Reviewer 피드백 전달, 최대 5 사이클 |
-| 5 사이클 후 BLOCKED | 사용자에게 보고 후 중단 |
+| Result | Action |
+|--------|--------|
+| APPROVED | Proceed to the next task |
+| BLOCKED | Re-invoke `developer` with the full reviewer feedback; retry up to 5 cycles |
+| BLOCKED after 5 cycles | Stop and report to the user with a summary of unresolved issues |
+
+### Step 4: Sprint Completion
+
+After all tasks are APPROVED:
+1. Summarize completed tasks and key design decisions to the user.
+2. Optionally write a completion summary to `prompts/sprints/complete/sprintN.md`.
+
+## Orchestration Notes
+
+- **Context isolation**: Each subagent starts fresh. Do not rely on implicit shared state — always pass relevant context explicitly in the prompt.
+- **Parallelism**: If the sprint spec marks tasks as parallel-safe, you may invoke multiple `developer` agents concurrently, but each must be reviewed independently before the sprint is marked complete.
+- **Planner-first for new sprints**: If the user requests a new sprint without an existing spec, invoke `sprint-planner` first before calling `developer`.
+- **Design issues**: If the `code-reviewer` routes an issue to the Planner (structural/design flaw), pause the cycle and surface it to the user before proceeding.
 
 **Last Updated**: 2026-04-09
