@@ -1,10 +1,11 @@
 """Tests for OFUL algorithm."""
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from src.algorithms.oful import OFUL
+from src.algorithms.oful import OFUL, oful_select_action, oful_update
 
 
 class TestOFUL:
@@ -193,3 +194,63 @@ class TestOFUL:
             algo.update(context_selected, reward)
 
             assert algo.t == t + 1
+
+
+class TestDisableJit:
+    """Tests confirming correct behavior under jax.disable_jit()."""
+
+    def test_oful_select_action_disable_jit(self):
+        """oful_select_action returns correct shape and type under disable_jit."""
+        context_dim = 5
+        num_arms = 4
+        design_matrix_inv = jnp.eye(context_dim)
+        sum_reward_context = jnp.zeros(context_dim)
+        contexts = jnp.ones((num_arms, context_dim))
+
+        with jax.disable_jit():
+            action = oful_select_action(
+                design_matrix_inv,
+                sum_reward_context,
+                contexts,
+                t=0,
+                context_dim=context_dim,
+                lambda_=1.0,
+                subgaussian_scale=1.0,
+                norm_bound=1.0,
+                context_bound=1.0,
+                delta=0.01,
+            )
+        assert int(action) in range(num_arms)
+
+    def test_oful_update_disable_jit(self):
+        """oful_update returns correct shapes under disable_jit."""
+        context_dim = 5
+        design_matrix_inv = jnp.eye(context_dim)
+        sum_reward_context = jnp.zeros(context_dim)
+        context = jnp.ones(context_dim)
+        reward = jnp.array(1.0)
+
+        with jax.disable_jit():
+            new_dm_inv, new_src = oful_update(design_matrix_inv, sum_reward_context, context, reward)
+
+        assert new_dm_inv.shape == (context_dim, context_dim)
+        assert new_src.shape == (context_dim,)
+
+    def test_run_episodes_vmap_disable_jit(self):
+        """run_episodes_vmap produces correct shape under disable_jit."""
+        from src.experiment import run_episodes_vmap
+
+        seeds = jnp.arange(2, dtype=jnp.int32)
+        kwargs = {
+            "context_dim": 3,
+            "num_arms": 4,
+            "num_steps": 5,
+            "context_bound": 1.0,
+            "lambda_": 1.0,
+            "subgaussian_scale": 1.0,
+            "norm_bound": 1.0,
+            "delta": 0.01,
+        }
+        with jax.disable_jit():
+            result = run_episodes_vmap(seeds=seeds, **kwargs)
+        assert result.shape == (2, 5)

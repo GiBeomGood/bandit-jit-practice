@@ -55,7 +55,12 @@ prompts/
     ├── details/          # Supplementary detail documents for complex tasks
     │   ├── task_1_1_topic.md
     │   └── ...
-    └── complete/         # Completed sprint summaries
+    ├── todo/             # Deferred tasks (status: open|completed in frontmatter)
+    │   │                 # Created by: planner (scope overflow) or orchestrator (BLOCKED ×5)
+    │   │                 # Scanned by: planner (startup) and orchestrator (sprint completion)
+    │   ├── todo_sprint1_task_title.md
+    │   └── ...
+    └── complete/         # Completed sprint summaries (written by orchestrator, in Korean)
         ├── sprint1.md
         └── ...
 
@@ -63,5 +68,29 @@ src/                      # Core implementation code
 tests/                    # Test code
 configs/                  # YAML configuration files
 ```
+
+## Todo File Template
+
+Every file under `todo/` must use this format:
+
+```markdown
+---
+status: open          # open | completed
+origin_sprint: N
+title: Short task title
+---
+
+## Background
+Why this was deferred and what the original context was.
+
+## What Needs to Be Done
+Clear description of the task.
+
+## Acceptance Criteria
+- Criterion 1
+- Criterion 2
+```
+
+File naming: `todo_sprintN_task_title.md` (N = origin sprint number).
 
 **Last Updated**: 2026-04-09

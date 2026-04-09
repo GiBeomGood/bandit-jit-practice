@@ -116,8 +116,7 @@ def compute_ucb_values(
     return mean_terms + radius_t * ellipsoid_norms
 
 
-@jax.jit
-def jit_oful_select_action(
+def oful_select_action(
     design_matrix_inv: jnp.ndarray,
     sum_reward_context: jnp.ndarray,
     contexts: jnp.ndarray,
@@ -129,10 +128,10 @@ def jit_oful_select_action(
     context_bound: float,
     delta: float,
 ) -> jnp.ndarray:
-    """Select an action using OFUL strategy (JIT-compiled).
+    """Select an action using OFUL strategy.
 
-    Bundles θ̂ estimation, confidence radius computation, and UCB arm selection
-    into a single JIT-compiled unit to minimize compilation overhead.
+    Computes θ̂ estimate, confidence radius, and UCB values to select the arm
+    with the highest upper confidence bound. JIT is applied at the call site.
 
     Args:
         design_matrix_inv: Inverse design matrix B_t^{-1}, shape (context_dim, context_dim)
@@ -155,17 +154,16 @@ def jit_oful_select_action(
     return jnp.argmax(ucb_values)
 
 
-@jax.jit
-def jit_oful_update(
+def oful_update(
     design_matrix_inv: jnp.ndarray,
     sum_reward_context: jnp.ndarray,
     context: jnp.ndarray,
     reward: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Update OFUL state with observed feedback (JIT-compiled).
+    """Update OFUL state with observed feedback.
 
-    Bundles design matrix inverse update and reward-context sum update
-    into a single JIT-compiled unit.
+    Applies Sherman-Morrison rank-1 update to the inverse design matrix and
+    accumulates the reward-context sum. JIT is applied at the call site.
 
     Args:
         design_matrix_inv: Current inverse design matrix B_t^{-1}, shape (context_dim, context_dim)
@@ -244,7 +242,7 @@ class OFUL(Algorithm):
             raise RuntimeError("Algorithm not initialized. Call reset() first.")
 
         return int(
-            jit_oful_select_action(
+            oful_select_action(
                 self.design_matrix_inv,
                 self.sum_reward_context,
                 contexts,
@@ -265,7 +263,7 @@ class OFUL(Algorithm):
             context: Context vector of selected arm, shape (context_dim,)
             reward: Observed reward (scalar)
         """
-        self.design_matrix_inv, self.sum_reward_context = jit_oful_update(
+        self.design_matrix_inv, self.sum_reward_context = oful_update(
             self.design_matrix_inv,
             self.sum_reward_context,
             context,

@@ -10,10 +10,8 @@ import os
 import sys
 import time
 
-import jax
 import jax.numpy as jnp
 import numpy as np
-from omegaconf import OmegaConf
 
 
 def parse_args() -> argparse.Namespace:
@@ -133,39 +131,54 @@ def print_stats(label: str, times: list) -> float:
     return mean_t
 
 
+def _load_benchmark_section(config_path: str) -> dict:
+    """Load the benchmark-specific section from a config file.
+
+    Args:
+        config_path: Path to the YAML config file.
+
+    Returns:
+        bench: Dictionary with benchmark keys (num_episodes, num_warmup, num_trials).
+    """
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.load(config_path)
+    return OmegaConf.to_container(cfg.benchmark, resolve=True)
+
+
 def main() -> None:
     """Run sequential vs vmap benchmark and print results."""
     args = parse_args()
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    cfg = OmegaConf.load(args.config)
-    exp = OmegaConf.to_container(cfg.experiment, resolve=True)
-    algo = OmegaConf.to_container(cfg.algo, resolve=True)
-    bench = OmegaConf.to_container(cfg.benchmark, resolve=True)
+    from src.experiment import ExperimentRunner
+
+    runner = ExperimentRunner.from_yaml(args.config)
+    bench = _load_benchmark_section(args.config)
 
     num_episodes = bench["num_episodes"]
     num_warmup = bench["num_warmup"]
     num_trials = bench["num_trials"]
 
     episode_kwargs = {
-        "context_dim": exp["context_dim"],
-        "num_arms": exp["num_arms"],
-        "num_steps": exp["num_steps"],
-        "context_bound": exp["context_bound"],
-        "lambda_": algo["lambda_"],
-        "subgaussian_scale": algo["subgaussian_scale"],
-        "norm_bound": algo["norm_bound"],
-        "delta": algo["delta"],
+        "context_dim": runner.context_dim,
+        "num_arms": runner.num_arms,
+        "num_steps": runner.num_steps,
+        "context_bound": runner.context_bound,
+        "lambda_": runner.algo_params["lambda_"],
+        "subgaussian_scale": runner.algo_params["subgaussian_scale"],
+        "norm_bound": runner.algo_params["norm_bound"],
+        "delta": runner.algo_params["delta"],
     }
 
     print("=" * 55)
     print("Benchmark: Sequential vs vmap episode parallelization")
     print("=" * 55)
     print(
-        f"Config: context_dim={exp['context_dim']}, "
-        f"num_arms={exp['num_arms']}, "
-        f"num_steps={exp['num_steps']}, "
+        f"Config: context_dim={runner.context_dim}, "
+        f"num_arms={runner.num_arms}, "
+        f"num_steps={runner.num_steps}, "
         f"num_episodes={num_episodes}"
     )
     print(f"Warmup: {num_warmup} trial(s), Benchmark: {num_trials} trial(s)")

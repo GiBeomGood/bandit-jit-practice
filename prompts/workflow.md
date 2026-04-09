@@ -55,19 +55,31 @@ For each task, run a developer → code-reviewer cycle.
 |--------|--------|
 | APPROVED | Proceed to the next task |
 | BLOCKED | Re-invoke `developer` with the full reviewer feedback; retry up to 5 cycles |
-| BLOCKED after 5 cycles | Stop and report to the user with a summary of unresolved issues |
+| BLOCKED after 5 cycles | Create a todo file at `prompts/sprints/todo/todo_sprintN_task_title.md` using the template in `constitution.md`, then stop and report to the user with a summary of unresolved issues |
 
 ### Step 4: Sprint Completion
 
 After all tasks are APPROVED:
-1. Summarize completed tasks and key design decisions to the user.
-2. Optionally write a completion summary to `prompts/sprints/complete/sprintN.md`.
+
+1. **Update the spec**: In `spec/sprintN.md`, change the status field to `**Status**: Completed (YYYY-MM-DD)`.
+
+2. **Check deferred items**: For any todo file whose task was implemented and APPROVED in this sprint, update its frontmatter to `status: completed`. Leave unmatched open todos as-is — the sprint-planner will pick them up at the next sprint's startup.
+
+3. **Summarize** completed tasks and key design decisions to the user.
+
+4. **Write** `prompts/sprints/complete/sprintN.md`.
+
+**Completion summary format** (written by the orchestrator, in Korean):
+- File: `prompts/sprints/complete/sprintN.md`
+- Language: Korean — for human review, not agent consumption
+- Sections:
+  - 완료된 태스크 목록 및 주요 구현 결정 사항
+  - 스프린트 중 발생한 설계 변경 또는 주목할 사항
+  - 이월된 항목 (`todo/` 파일 기준, 완료/미완료 상태 포함)
 
 ## Orchestration Notes
 
-- **Context isolation**: Each subagent starts fresh. Do not rely on implicit shared state — always pass relevant context explicitly in the prompt.
 - **Parallelism**: If the sprint spec marks tasks as parallel-safe, you may invoke multiple `developer` agents concurrently, but each must be reviewed independently before the sprint is marked complete.
-- **Planner-first for new sprints**: If the user requests a new sprint without an existing spec, invoke `sprint-planner` first before calling `developer`.
 - **Design issues**: If the `code-reviewer` routes an issue to the Planner (structural/design flaw), pause the cycle and surface it to the user before proceeding.
 
 **Last Updated**: 2026-04-09

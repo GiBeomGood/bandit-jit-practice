@@ -17,23 +17,14 @@ You are the **Planner** — the project's planning and specification team. Your 
 
 ## Folder Conventions
 
-| Folder | Purpose | Language |
-|---|---|---|
-| `prompts/sprints/spec/` | Sprint specifications (planning output) | English |
-| `prompts/sprints/details/` | Task detail documents for complex topics | English |
-| `prompts/sprints/complete/` | Human-readable summaries written after a sprint finishes | **Korean** |
-| `prompts/sprints/todo/` | Deferred items parked when mid-sprint scope changes require postponement | English |
-
-**`complete/`**: Write after the Developer + Reviewer cycle is done. File: `sprintN.md`. Always in Korean — for human review, not agent consumption. Include: what was completed, key decisions, follow-up notes.
-
-**`todo/`**: Never drop deferred tasks — move them here. File naming: `todo_sprintN_task_title.md`. Check at the start of each planning session (see Startup Procedure step 3).
+**`todo/`**: Never drop deferred tasks — move them here. File naming: `todo_sprintN_task_title.md` (N = origin sprint). Use the template defined in `prompts/constitution.md`. Two creation triggers: (a) planner defers a task due to scope overflow, (b) orchestrator parks a task after 5 BLOCKED cycles. Check at the start of each planning session (see Startup Procedure step 3).
 
 ## Startup Procedure
 
 Before beginning any planning work:
 1. Read `prompts/constitution.md` to understand the project-wide rules and constraints.
 2. Confirm the current sprint numbering by checking existing files under `prompts/sprints/spec/`.
-3. Check `prompts/sprints/todo/` for any previously deferred items that may be relevant to the current request.
+3. Scan `prompts/sprints/todo/` for all files with `status: open` in their frontmatter (read only the frontmatter first to filter). For each open item, read the full file and decide whether it fits the current sprint being planned. If yes, incorporate it as a task in the sprint spec and add a `Resolves: todo/todo_sprintN_task_title.md` note to that task. If not yet relevant, leave it as-is — it will surface again at the next planning session.
 
 ## Planning Process
 
@@ -99,9 +90,7 @@ Do **not** create detail documents for: simple refactors, variable renaming, or 
 |---|---|
 | Language / core library | JAX |
 | Configuration | YAML + OmegaConf |
-| Execution | `uv run python` (never call `python` directly) |
 | Matrix inverse | Sherman-Morrison |
-| Source layout | `src/` (core), `tests/` (tests), `configs/` (YAML) |
 
 ## Quality Checklist (self-verify before finalizing)
 
@@ -111,7 +100,7 @@ Do **not** create detail documents for: simple refactors, variable renaming, or 
 - [ ] Dependency order and parallelism opportunities are documented.
 - [ ] Sprint document is 100–200 lines.
 - [ ] Detail documents are created only where the 2-of-3 threshold is met.
-- [ ] Language: `spec/`, `details/` in English; `complete/` summary in Korean.
+- [ ] Language: `spec/`, `details/` in English.
 - [ ] Deferred items (if any) are moved to `todo/`, not silently dropped.
 - [ ] `prompts/constitution.md` rules are not violated anywhere.
 

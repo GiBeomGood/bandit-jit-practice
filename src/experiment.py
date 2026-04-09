@@ -6,9 +6,14 @@ from typing import Any, Dict
 import jax
 import jax.numpy as jnp
 import numpy as np
+from omegaconf import OmegaConf
 
-from src.algorithms.oful import OFUL, jit_oful_select_action, jit_oful_update
-from src.environments.contextual_linear import ContextualLinearBandit
+from src.algorithms.oful import OFUL, oful_select_action, oful_update
+from src.environments.contextual_linear import (
+    ContextualLinearBandit,
+    sample_contexts,
+    sample_true_theta,
+)
 
 
 def _compute_step_regret(contexts_t: jnp.ndarray, action: int, best_arm: int, true_theta: jnp.ndarray) -> float:
@@ -141,18 +146,8 @@ def run_episode_scan(
     key = jax.random.PRNGKey(seed)
     key, k_theta, k_ctx, k_noise = jax.random.split(key, 4)
 
-    # Generate true theta: ||θ*||₂ ≤ norm_bound
-    theta_raw = jax.random.normal(k_theta, shape=(context_dim,))
-    theta_norm = jnp.linalg.norm(theta_raw)
-    true_theta = theta_raw * jnp.minimum(1.0, norm_bound / (theta_norm + 1e-8))
-
-    # Generate all contexts and noises upfront
-    contexts = jax.random.uniform(
-        k_ctx,
-        shape=(num_steps, num_arms, context_dim),
-        minval=-context_bound,
-        maxval=context_bound,
-    )
+    true_theta = sample_true_theta(k_theta, context_dim, norm_bound)
+    contexts = sample_contexts(k_ctx, num_steps, num_arms, context_dim, context_bound)
     noises = jax.random.normal(k_noise, shape=(num_steps,))
 
     # Initial OFUL state: B_0 = λI → B_0^{-1} = (1/λ)I
@@ -174,7 +169,7 @@ def run_episode_scan(
         design_matrix_inv, sum_reward_context, cumulative_regret = carry
         contexts_t, noise_t, t_idx = x
 
-        action = jit_oful_select_action(
+        action = oful_select_action(
             design_matrix_inv,
             sum_reward_context,
             contexts_t,
@@ -193,7 +188,7 @@ def run_episode_scan(
         regret_t = arm_values[best_arm] - arm_values[action]
         new_cumulative_regret = cumulative_regret + regret_t
 
-        new_dm_inv, new_src = jit_oful_update(design_matrix_inv, sum_reward_context, contexts_t[action], reward)
+        new_dm_inv, new_src = oful_update(design_matrix_inv, sum_reward_context, contexts_t[action], reward)
 
         return (new_dm_inv, new_src, new_cumulative_regret), new_cumulative_regret
 
@@ -298,6 +293,42 @@ class ExperimentRunner:
             "seed": seed,
             "use_vmap": use_vmap,
         }
+
+    @classmethod
+    def from_yaml(cls, config_path: str) -> "ExperimentRunner":
+        """Construct an ExperimentRunner from a YAML config file.
+
+        Reads the ``experiment`` and ``algo`` sections of the YAML. The
+        ``experiment`` section must contain ``context_dim``, ``num_arms``,
+        ``num_steps``, and ``num_episodes``. Optional keys are
+        ``context_bound``, ``seed``, and ``use_vmap`` (defaults to ``false``
+        if absent).
+
+        Args:
+            config_path: Path to the YAML configuration file.
+
+        Returns:
+            runner: Fully configured ``ExperimentRunner`` instance.
+        """
+        cfg = OmegaConf.load(config_path)
+        exp = OmegaConf.to_container(cfg.experiment, resolve=True)
+        algo = OmegaConf.to_container(cfg.algo, resolve=True)
+
+        return cls(
+            num_episodes=exp["num_episodes"],
+            context_dim=exp["context_dim"],
+            num_arms=exp["num_arms"],
+            num_steps=exp["num_steps"],
+            context_bound=exp.get("context_bound", 1.0),
+            algo_params={
+                "lambda_": algo.get("lambda_", 1.0),
+                "subgaussian_scale": algo.get("subgaussian_scale", 1.0),
+                "norm_bound": algo.get("norm_bound", 1.0),
+                "delta": algo.get("delta", 0.01),
+            },
+            seed=exp.get("seed", None),
+            use_vmap=exp.get("use_vmap", False),
+        )
 
     def run(self) -> Dict[str, Any]:
         """Run the experiment over multiple episodes.

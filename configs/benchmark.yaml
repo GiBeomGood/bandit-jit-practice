@@ -5,7 +5,9 @@ experiment:
   context_dim: 10
   num_arms: 20
   num_steps: 500
+  num_episodes: 20
   context_bound: 1.0
+  use_vmap: false
 
 algo:
   lambda_: 1.0

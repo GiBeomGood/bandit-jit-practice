@@ -8,6 +8,80 @@ import jax.numpy as jnp
 from src.environments.base import Environment
 
 
+def sample_true_theta(
+    key: jax.Array,
+    context_dim: int,
+    param_norm_bound: float,
+) -> jnp.ndarray:
+    """Sample a true parameter vector θ* with ||θ*||₂ ≤ param_norm_bound.
+
+    Draws a raw vector from N(0, I) and rescales so the norm does not exceed
+    param_norm_bound.
+
+    Args:
+        key: JAX PRNG key.
+        context_dim: Dimension of the parameter vector.
+        param_norm_bound: Upper bound on ||θ*||₂.
+
+    Returns:
+        true_theta: Parameter vector of shape (context_dim,).
+    """
+    theta_raw = jax.random.normal(key, shape=(context_dim,))
+    theta_norm = jnp.linalg.norm(theta_raw)
+    scale = jnp.minimum(1.0, param_norm_bound / (theta_norm + 1e-8))
+    return theta_raw * scale
+
+
+def sample_contexts(
+    key: jax.Array,
+    num_steps: int,
+    num_arms: int,
+    context_dim: int,
+    context_bound: float,
+) -> jnp.ndarray:
+    """Sample a context array for all steps and arms.
+
+    Contexts are drawn uniformly from [-context_bound, context_bound]^context_dim.
+
+    Args:
+        key: JAX PRNG key.
+        num_steps: Number of time steps in the episode.
+        num_arms: Number of arms.
+        context_dim: Feature dimension.
+        context_bound: Bound on each context coordinate.
+
+    Returns:
+        contexts: Array of shape (num_steps, num_arms, context_dim).
+    """
+    contexts_raw = jax.random.uniform(
+        key,
+        shape=(num_steps, num_arms, context_dim),
+        minval=-1.0,
+        maxval=1.0,
+    )
+    return contexts_raw * context_bound
+
+
+def compute_reward(
+    true_theta: jnp.ndarray,
+    context: jnp.ndarray,
+    noise: jnp.ndarray,
+) -> jnp.ndarray:
+    """Compute a scalar reward for a selected arm context.
+
+    reward = θ* · context + noise
+
+    Args:
+        true_theta: True parameter vector, shape (context_dim,).
+        context: Context of the selected arm, shape (context_dim,).
+        noise: Scalar noise term (e.g., drawn from N(0, 1)).
+
+    Returns:
+        reward: Scalar reward value.
+    """
+    return jnp.dot(true_theta, context) + noise
+
+
 class ContextualLinearBandit(Environment):
     """Contextual Linear Bandit environment.
 
@@ -58,20 +132,10 @@ class ContextualLinearBandit(Environment):
         """
         self.key, subkey1, subkey2 = jax.random.split(self.key, 3)
 
-        # Sample true theta: ||θ*||₂ ≤ param_norm_bound (clip if needed)
-        theta_raw = jax.random.normal(subkey1, shape=(self.context_dim,))
-        theta_norm = jnp.linalg.norm(theta_raw)
-        scale = jnp.minimum(1.0, self.param_norm_bound / (theta_norm + 1e-8))
-        self._true_theta = theta_raw * scale
-
-        # Sample context array: (num_steps, num_arms, context_dim)
-        contexts_raw = jax.random.uniform(
-            subkey2,
-            shape=(self.num_steps, self.num_arms, self.context_dim),
-            minval=-1.0,
-            maxval=1.0,
+        self._true_theta = sample_true_theta(subkey1, self.context_dim, self.param_norm_bound)
+        self._contexts = sample_contexts(
+            subkey2, self.num_steps, self.num_arms, self.context_dim, self.context_bound
         )
-        self._contexts = contexts_raw * self.context_bound
 
         self._current_t = 0
 
@@ -101,7 +165,7 @@ class ContextualLinearBandit(Environment):
         self.key, subkey = jax.random.split(self.key)
         noise = jax.random.normal(subkey, shape=())
         selected_context = contexts_t[action]
-        reward = jnp.dot(self._true_theta, selected_context) + noise
+        reward = compute_reward(self._true_theta, selected_context, noise)
 
         arm_values = jnp.dot(contexts_t, self._true_theta)  # shape (num_arms,)
         best_arm = jnp.argmax(arm_values)
