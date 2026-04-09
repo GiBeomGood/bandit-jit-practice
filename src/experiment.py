@@ -1,11 +1,13 @@
 """Experiment runner for bandit algorithms."""
 
+import functools
 from typing import Any, Dict
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
-from src.algorithms.oful import OFUL
+from src.algorithms.oful import OFUL, jit_oful_select_action, jit_oful_update
 from src.environments.contextual_linear import ContextualLinearBandit
 
 
@@ -39,7 +41,7 @@ def _run_episode_loop(env: ContextualLinearBandit, algo: OFUL, true_theta: jnp.n
         cumulative_regrets: Array of cumulative regrets for each step, shape (num_steps,)
     """
     cumulative_regret = 0.0
-    cumulative_regrets = jnp.zeros(num_steps)
+    cumulative_regrets = []
 
     for t in range(num_steps):
         contexts_t = env.get_contexts_at_t(t)
@@ -48,11 +50,11 @@ def _run_episode_loop(env: ContextualLinearBandit, algo: OFUL, true_theta: jnp.n
 
         regret_t = _compute_step_regret(contexts_t, action, best_arm_t, true_theta)
         cumulative_regret += regret_t
-        cumulative_regrets = cumulative_regrets.at[t].set(cumulative_regret)
+        cumulative_regrets.append(cumulative_regret)
 
         algo.update(contexts_t[action], reward)
 
-    return cumulative_regrets
+    return jnp.array(cumulative_regrets)
 
 
 def run_single_episode_sequential(
@@ -107,6 +109,141 @@ def run_single_episode_sequential(
     return _run_episode_loop(env, algo, true_theta, num_steps)
 
 
+def run_episode_scan(
+    seed: int,
+    context_dim: int,
+    num_arms: int,
+    num_steps: int,
+    context_bound: float,
+    lambda_: float,
+    subgaussian_scale: float,
+    norm_bound: float,
+    delta: float,
+) -> jnp.ndarray:
+    """Run a single episode using jax.lax.scan for the step loop.
+
+    Pure function: all randomness is derived from seed. Compatible with jax.vmap.
+
+    Args:
+        seed: Random seed for this episode (int or scalar JAX array)
+        context_dim: Feature dimension
+        num_arms: Number of arms
+        num_steps: Episode length (time steps)
+        context_bound: Context norm bound
+        lambda_: Ridge regularization parameter
+        subgaussian_scale: Sub-Gaussian variance proxy
+        norm_bound: Parameter norm bound (||θ*|| ≤ norm_bound)
+        delta: Failure probability
+
+    Returns:
+        cumulative_regrets: Cumulative regret at each step, shape (num_steps,)
+    """
+    key = jax.random.PRNGKey(seed)
+    key, k_theta, k_ctx, k_noise = jax.random.split(key, 4)
+
+    # Generate true theta: ||θ*||₂ ≤ norm_bound
+    theta_raw = jax.random.normal(k_theta, shape=(context_dim,))
+    theta_norm = jnp.linalg.norm(theta_raw)
+    true_theta = theta_raw * jnp.minimum(1.0, norm_bound / (theta_norm + 1e-8))
+
+    # Generate all contexts and noises upfront
+    contexts = jax.random.uniform(
+        k_ctx,
+        shape=(num_steps, num_arms, context_dim),
+        minval=-context_bound,
+        maxval=context_bound,
+    )
+    noises = jax.random.normal(k_noise, shape=(num_steps,))
+
+    # Initial OFUL state: B_0 = λI → B_0^{-1} = (1/λ)I
+    init_design_matrix_inv = (1.0 / lambda_) * jnp.eye(context_dim)
+    init_sum_reward_context = jnp.zeros(context_dim)
+    init_carry = (init_design_matrix_inv, init_sum_reward_context, jnp.array(0.0))
+
+    def step_fn(carry: tuple, x: tuple) -> tuple:
+        """Execute one bandit step within the scan loop.
+
+        Args:
+            carry: (design_matrix_inv, sum_reward_context, cumulative_regret)
+            x: (contexts_t, noise_t, t_idx) for this step
+
+        Returns:
+            new_carry: Updated (design_matrix_inv, sum_reward_context, cumulative_regret)
+            cumulative_regret: Cumulative regret after this step (scalar)
+        """
+        design_matrix_inv, sum_reward_context, cumulative_regret = carry
+        contexts_t, noise_t, t_idx = x
+
+        action = jit_oful_select_action(
+            design_matrix_inv,
+            sum_reward_context,
+            contexts_t,
+            t_idx,
+            context_dim,
+            lambda_,
+            subgaussian_scale,
+            norm_bound,
+            context_bound,
+            delta,
+        )
+
+        arm_values = contexts_t @ true_theta  # (num_arms,)
+        best_arm = jnp.argmax(arm_values)
+        reward = arm_values[action] + noise_t
+        regret_t = arm_values[best_arm] - arm_values[action]
+        new_cumulative_regret = cumulative_regret + regret_t
+
+        new_dm_inv, new_src = jit_oful_update(design_matrix_inv, sum_reward_context, contexts_t[action], reward)
+
+        return (new_dm_inv, new_src, new_cumulative_regret), new_cumulative_regret
+
+    xs = (contexts, noises, jnp.arange(num_steps))
+    _, cumulative_regrets = jax.lax.scan(step_fn, init_carry, xs)
+    return cumulative_regrets
+
+
+def run_episodes_vmap(
+    seeds: jnp.ndarray,
+    context_dim: int,
+    num_arms: int,
+    num_steps: int,
+    context_bound: float,
+    lambda_: float,
+    subgaussian_scale: float,
+    norm_bound: float,
+    delta: float,
+) -> jnp.ndarray:
+    """Run multiple episodes in parallel using jax.jit(jax.vmap(...)).
+
+    Args:
+        seeds: Integer array of seeds, shape (num_episodes,)
+        context_dim: Feature dimension
+        num_arms: Number of arms
+        num_steps: Episode length (time steps)
+        context_bound: Context norm bound
+        lambda_: Ridge regularization parameter
+        subgaussian_scale: Sub-Gaussian variance proxy
+        norm_bound: Parameter norm bound
+        delta: Failure probability
+
+    Returns:
+        cumulative_regrets: Shape (num_episodes, num_steps)
+    """
+    episode_fn = functools.partial(
+        run_episode_scan,
+        context_dim=context_dim,
+        num_arms=num_arms,
+        num_steps=num_steps,
+        context_bound=context_bound,
+        lambda_=lambda_,
+        subgaussian_scale=subgaussian_scale,
+        norm_bound=norm_bound,
+        delta=delta,
+    )
+    jit_vmapped = jax.jit(jax.vmap(episode_fn))
+    return jit_vmapped(seeds)
+
+
 class ExperimentRunner:
     """Runner for conducting bandit experiments over multiple episodes."""
 
@@ -119,6 +256,7 @@ class ExperimentRunner:
         context_bound: float = 1.0,
         algo_params: Dict[str, Any] = None,
         seed: int = None,
+        use_vmap: bool = False,
     ):
         """Initialize experiment runner.
 
@@ -131,6 +269,7 @@ class ExperimentRunner:
             algo_params: Dictionary of algorithm parameters
                 (lambda_, subgaussian_scale, norm_bound, delta for OFUL)
             seed: Random seed for reproducibility
+            use_vmap: If True, use jax.jit(jax.vmap(...)) for parallel episode execution
         """
         self.num_episodes = num_episodes
         self.context_dim = context_dim
@@ -138,6 +277,7 @@ class ExperimentRunner:
         self.num_steps = num_steps
         self.context_bound = context_bound
         self.seed = seed
+        self.use_vmap = use_vmap
 
         if algo_params is None:
             algo_params = {}
@@ -156,10 +296,13 @@ class ExperimentRunner:
             "context_bound": context_bound,
             "algo_params": self.algo_params,
             "seed": seed,
+            "use_vmap": use_vmap,
         }
 
     def run(self) -> Dict[str, Any]:
         """Run the experiment over multiple episodes.
+
+        Uses jax.jit(jax.vmap(...)) when use_vmap=True, otherwise sequential loop.
 
         Returns:
             Dict with keys:
@@ -168,13 +311,12 @@ class ExperimentRunner:
             - configs: dict with experiment configurations
             - metadata: dict with additional info (seeds, etc.)
         """
-        all_regrets = np.zeros((self.num_episodes, self.num_steps))
+        seed_base = self.seed if self.seed is not None else 0
 
-        for episode in range(self.num_episodes):
-            episode_seed = (self.seed + episode) if self.seed is not None else episode
-
-            regrets = run_single_episode_sequential(
-                episode_seed,
+        if self.use_vmap:
+            seeds = jnp.arange(self.num_episodes, dtype=jnp.int32) + seed_base
+            regrets_jax = run_episodes_vmap(
+                seeds,
                 self.context_dim,
                 self.num_arms,
                 self.num_steps,
@@ -184,8 +326,23 @@ class ExperimentRunner:
                 self.algo_params["norm_bound"],
                 self.algo_params["delta"],
             )
-
-            all_regrets[episode, :] = np.array(regrets)
+            all_regrets = np.array(regrets_jax)
+        else:
+            all_regrets = np.zeros((self.num_episodes, self.num_steps))
+            for episode in range(self.num_episodes):
+                episode_seed = seed_base + episode
+                regrets = run_single_episode_sequential(
+                    episode_seed,
+                    self.context_dim,
+                    self.num_arms,
+                    self.num_steps,
+                    self.context_bound,
+                    self.algo_params["lambda_"],
+                    self.algo_params["subgaussian_scale"],
+                    self.algo_params["norm_bound"],
+                    self.algo_params["delta"],
+                )
+                all_regrets[episode, :] = np.array(regrets)
 
         return {
             "regrets": all_regrets,

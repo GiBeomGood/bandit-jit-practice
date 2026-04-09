@@ -1,0 +1,16 @@
+# Experiment configuration (full run)
+# Usage: uv run python scripts/run_experiment.py
+
+experiment:
+  context_dim: 10
+  num_arms: 20
+  num_steps: 5000
+  num_episodes: 10
+  context_bound: 1.0
+  seed: 0
+
+algo:
+  lambda_: 1.0
+  subgaussian_scale: 1.0
+  norm_bound: 1.0
+  delta: 0.01

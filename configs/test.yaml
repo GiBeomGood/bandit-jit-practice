@@ -1,0 +1,16 @@
+# Test configuration (fast, minimal)
+# Usage: tests/ (loaded by test fixtures)
+
+experiment:
+  context_dim: 3
+  num_arms: 5
+  num_steps: 10
+  num_episodes: 2
+  context_bound: 1.0
+  seed: 42
+
+algo:
+  lambda_: 1.0
+  subgaussian_scale: 1.0
+  norm_bound: 1.0
+  delta: 0.01

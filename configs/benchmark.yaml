@@ -1,0 +1,19 @@
+# Benchmark configuration (JIT performance comparison)
+# Usage: uv run python scripts/benchmark_jit.py [--disable_jit]
+
+experiment:
+  context_dim: 10
+  num_arms: 20
+  num_steps: 500
+  context_bound: 1.0
+
+algo:
+  lambda_: 1.0
+  subgaussian_scale: 1.0
+  norm_bound: 1.0
+  delta: 0.01
+
+benchmark:
+  num_warmup: 2
+  num_trials: 5
+  num_episodes: 20

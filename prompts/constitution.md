@@ -10,9 +10,9 @@
 
 ## Workflow
 
-이 프로젝트는 **Planner → Developer → Reviewer** 3단계 워크플로우를 따릅니다.
+이 프로젝트에서 에이전트는 **Planner, Developer, Reviewer**의 3가지 역할을 수행합니다.
 
-자세한 내용은 [workflow.md](./workflow.md)를 참고하세요.
+워크플로우에 대한 자세한 내용은 [workflow.md](./workflow.md)를 참고하세요.
 
 ## Python Execution
 
@@ -41,13 +41,12 @@
 ### Folder Structure Reference
 
 ```
+.claude/
+└── agents/               # 에이전트 역할 정의 (Planner, Developer, Reviewer)
+
 prompts/
 ├── constitution.md       # 이 파일 (원칙 & 가이드라인)
 ├── workflow.md           # 멀티에이전트 워크플로우 가이드
-├── roles/                # Agent 역할 정의
-│   ├── planner.md
-│   ├── developer.md
-│   └── reviewer.md
 └── sprints/              # Sprint 작업 관리
     ├── spec/             # 진행할 sprint 상세 정의
     │   ├── sprint1.md
