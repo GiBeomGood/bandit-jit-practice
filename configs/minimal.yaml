@@ -1,0 +1,19 @@
+# Minimal config for reproducibility and sanity tests.
+# Deliberately small: fewest arms/steps needed to exercise the full code path.
+
+experiment:
+  context_dim: 2
+  num_arms: 3
+  num_steps: 20
+  num_episodes: 2
+  context_bound: 1.0
+  seed: 7
+
+algo:
+  lambda_: 1.0
+  subgaussian_scale: 1.0
+  norm_bound: 1.0
+  delta: 0.01
+
+output:
+  format: png

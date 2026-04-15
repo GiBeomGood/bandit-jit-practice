@@ -8,10 +8,12 @@ experiment:
   num_episodes: 2
   context_bound: 1.0
   seed: 42
-  use_vmap: false
 
 algo:
   lambda_: 1.0
   subgaussian_scale: 1.0
   norm_bound: 1.0
   delta: 0.01
+
+output:
+  format: png

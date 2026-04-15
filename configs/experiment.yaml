@@ -1,17 +1,19 @@
 # Experiment configuration (full run)
-# Usage: uv run python scripts/run_experiment.py
+# Usage: uv run python main.py --config configs/experiment.yaml
 
 experiment:
   context_dim: 10
   num_arms: 20
-  num_steps: 5000
+  num_steps: 1000
   num_episodes: 10
   context_bound: 1.0
   seed: 0
-  use_vmap: false
 
 algo:
   lambda_: 1.0
   subgaussian_scale: 1.0
   norm_bound: 1.0
   delta: 0.01
+
+output:
+  format: png
