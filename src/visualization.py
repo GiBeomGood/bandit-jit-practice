@@ -57,7 +57,19 @@ class Visualizer:
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=11)
 
-        # Save as PDF
+        # Save as PDF and SVG
         fig.tight_layout()
+        Visualizer._save_figure(fig, save_path)
+
+    @staticmethod
+    def _save_figure(fig: Any, save_path: str) -> None:
+        """Save figure to both PDF and SVG formats.
+
+        Args:
+            fig: Matplotlib figure to save.
+            save_path: Path to save the PDF (should end with .pdf).
+        """
         fig.savefig(save_path, format="pdf", dpi=150, bbox_inches="tight")
+        svg_path = save_path[:-4] + ".svg" if save_path.endswith(".pdf") else save_path + "_plot.svg"
+        fig.savefig(svg_path, format="svg", bbox_inches="tight")
         plt.close(fig)
