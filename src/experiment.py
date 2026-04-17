@@ -8,7 +8,12 @@ import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
 
-from src.algorithms.oful import oful_select_action, oful_update
+from src.algorithms.oful import (
+    compute_confidence_radius,
+    compute_theta_hat,
+    compute_ucb_values,
+    oful_update,
+)
 from src.environments.contextual_linear import (
     sample_contexts,
     sample_true_theta,
@@ -87,18 +92,11 @@ def run_episode_scan(
         design_matrix_inv, sum_reward_context, cumulative_regret = carry
         contexts_t, noise_t, t_idx = x
 
-        action = oful_select_action(
-            design_matrix_inv,
-            sum_reward_context,
-            contexts_t,
-            t_idx,
-            context_dim,
-            lambda_,
-            subgaussian_scale,
-            norm_bound,
-            context_bound,
-            delta,
+        theta_hat = compute_theta_hat(design_matrix_inv, sum_reward_context)
+        radius_t = compute_confidence_radius(
+            t_idx, context_dim, lambda_, subgaussian_scale, norm_bound, context_bound, delta,
         )
+        action = jnp.argmax(compute_ucb_values(contexts_t, theta_hat, design_matrix_inv, radius_t))
 
         arm_values = contexts_t @ true_theta  # (num_arms,)
         best_arm = jnp.argmax(arm_values)
@@ -218,15 +216,15 @@ class ExperimentRunner:
             "delta": algo_params.get("delta", 0.01),
         }
 
-        self.configs = {
-            "num_episodes": num_episodes,
-            "context_dim": context_dim,
-            "num_arms": num_arms,
-            "num_steps": num_steps,
-            "context_bound": context_bound,
-            "algo_params": self.algo_params,
-            "seed": seed,
-        }
+        _episode_fn = functools.partial(
+            run_episode_scan,
+            context_dim=context_dim,
+            num_arms=num_arms,
+            num_steps=num_steps,
+            context_bound=context_bound,
+            **self.algo_params,
+        )
+        self._compiled_run = jax.jit(jax.vmap(_episode_fn))
 
     @classmethod
     def from_yaml(cls, config_path: str) -> "ExperimentRunner":
@@ -251,20 +249,7 @@ class ExperimentRunner:
         exp = OmegaConf.to_container(cfg.experiment, resolve=True)
         algo = OmegaConf.to_container(cfg.algo, resolve=True)
 
-        return cls(
-            num_episodes=exp["num_episodes"],
-            context_dim=exp["context_dim"],
-            num_arms=exp["num_arms"],
-            num_steps=exp["num_steps"],
-            context_bound=exp.get("context_bound", 1.0),
-            algo_params={
-                "lambda_": algo.get("lambda_", 1.0),
-                "subgaussian_scale": algo.get("subgaussian_scale", 1.0),
-                "norm_bound": algo.get("norm_bound", 1.0),
-                "delta": algo.get("delta", 0.01),
-            },
-            seed=exp.get("seed", None),
-        )
+        return cls(**exp, algo_params=algo)
 
     def run(self) -> Dict[str, Any]:
         """Run the experiment over multiple episodes using jax.jit(jax.vmap(...)).
@@ -281,22 +266,19 @@ class ExperimentRunner:
         """
         seed_base = self.seed if self.seed is not None else 0
         seeds = jnp.arange(self.num_episodes, dtype=jnp.int32) + seed_base
-        regrets_jax = run_episodes(
-            seeds,
-            self.context_dim,
-            self.num_arms,
-            self.num_steps,
-            self.context_bound,
-            self.algo_params["lambda_"],
-            self.algo_params["subgaussian_scale"],
-            self.algo_params["norm_bound"],
-            self.algo_params["delta"],
-        )
-        all_regrets = np.array(regrets_jax)
+        all_regrets = np.array(self._compiled_run(seeds))
 
         return {
             "regrets": all_regrets,
-            "configs": self.configs,
+            "configs": {
+                "num_episodes": self.num_episodes,
+                "context_dim": self.context_dim,
+                "num_arms": self.num_arms,
+                "num_steps": self.num_steps,
+                "context_bound": self.context_bound,
+                "algo_params": self.algo_params,
+                "seed": self.seed,
+            },
             "metadata": {
                 "num_episodes_completed": self.num_episodes,
                 "seed_base": self.seed,

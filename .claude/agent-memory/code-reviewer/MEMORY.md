@@ -1,0 +1,5 @@
+- [Test Suite Architecture After Sprint 11](project_test_architecture.md) — Maps test files to JAX code paths; records what was deleted in Sprint 11
+- [Sprint 12 Task 1 — main.py Entry Point](project_sprint12_task1.md) — Design decisions for single entry point: output naming, title format, _save_figure behavior
+- [Sprint 12 Task 2 — Reproducibility and Minimal Config](project_sprint12_task2.md) — Seeding strategy, minimal.yaml spec, and reproducibility test structure
+- [Sprint 12 Task 3 — Delete Unused Code](project_sprint12_task3.md) — "Emptied to stub" is not "deleted"; 6 files must be physically removed
+- [Sprint 12 Task 4 — Rename Files](project_sprint12_task4.md) — test_vmap.py → test_episode_functions.py; jax/vmap/jit in code bodies is OK, only filename qualifiers must go

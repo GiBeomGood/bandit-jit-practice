@@ -74,9 +74,6 @@ def _save_figure(fig: Any, save_path: str) -> None:
     suffix = path.suffix.lower()
     fmt_map = {".png": "png", ".pdf": "pdf", ".svg": "svg"}
     if suffix not in fmt_map:
-        raise ValueError(
-            f"Unrecognized file extension '{suffix}'. "
-            f"Supported formats: {list(fmt_map.keys())}"
-        )
+        raise ValueError(f"Unrecognized file extension '{suffix}'. Supported formats: {list(fmt_map.keys())}")
     fig.savefig(save_path, format=fmt_map[suffix], dpi=150, bbox_inches="tight")
     plt.close(fig)

@@ -24,18 +24,11 @@ def _load_episode_kwargs() -> dict:
         Keyword arguments matching the run_episode_scan signature.
     """
     cfg = OmegaConf.load(str(MINIMAL_CONFIG))
-    exp = cfg.experiment
-    algo = cfg.algo
-    return {
-        "context_dim": exp.context_dim,
-        "num_arms": exp.num_arms,
-        "num_steps": exp.num_steps,
-        "context_bound": exp.context_bound,
-        "lambda_": algo.lambda_,
-        "subgaussian_scale": algo.subgaussian_scale,
-        "norm_bound": algo.norm_bound,
-        "delta": algo.delta,
-    }
+    exp = OmegaConf.to_container(cfg.experiment, resolve=True)
+    algo = OmegaConf.to_container(cfg.algo, resolve=True)
+    exp.pop("num_episodes", None)
+    exp.pop("seed", None)
+    return {**exp, **algo}
 
 
 # ---------------------------------------------------------------------------
@@ -87,38 +80,19 @@ def test_run_episodes_different_seeds_differ() -> None:
     kwargs = _load_episode_kwargs()
     seeds = jnp.array([0, 1], dtype=jnp.int32)
     result = np.array(run_episodes(seeds=seeds, **kwargs))
-    assert not np.array_equal(result[0], result[1]), (
-        "Different seeds must yield different regrets"
-    )
+    assert not np.array_equal(result[0], result[1]), "Different seeds must yield different regrets"
 
 
 def test_experiment_runner_different_seeds_differ() -> None:
     """ExperimentRunner with different seeds produces different regret trajectories."""
     cfg = OmegaConf.load(str(MINIMAL_CONFIG))
-    exp = cfg.experiment
+    exp = OmegaConf.to_container(cfg.experiment, resolve=True)
     algo = OmegaConf.to_container(cfg.algo, resolve=True)
+    seed_base = exp.pop("seed")
 
-    runner_a = ExperimentRunner(
-        num_episodes=exp.num_episodes,
-        context_dim=exp.context_dim,
-        num_arms=exp.num_arms,
-        num_steps=exp.num_steps,
-        context_bound=exp.context_bound,
-        algo_params=algo,
-        seed=exp.seed,
-    )
-    runner_b = ExperimentRunner(
-        num_episodes=exp.num_episodes,
-        context_dim=exp.context_dim,
-        num_arms=exp.num_arms,
-        num_steps=exp.num_steps,
-        context_bound=exp.context_bound,
-        algo_params=algo,
-        seed=exp.seed + 1,
-    )
+    runner_a = ExperimentRunner(**exp, algo_params=algo, seed=seed_base)
+    runner_b = ExperimentRunner(**exp, algo_params=algo, seed=seed_base + 1)
 
     regrets_a = runner_a.run()["regrets"]
     regrets_b = runner_b.run()["regrets"]
-    assert not np.array_equal(regrets_a, regrets_b), (
-        "Different seeds should produce different regret trajectories"
-    )
+    assert not np.array_equal(regrets_a, regrets_b), "Different seeds should produce different regret trajectories"

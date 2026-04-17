@@ -1,0 +1,5 @@
+- [Sprint 11 Test Cleanup](project_sprint11_test_cleanup.md) — which tests were removed in Task 11.2 and why (non-JAX sequential path)
+- [Sprint 11 JAX Cleanup](project_sprint11_jax_cleanup.md) — what non-JAX code was removed in Task 11.1; ExperimentRunner now always uses jit+vmap
+- [Sprint 12 Task 3 Cleanup](project_sprint12_task3_cleanup.md) — Visualizer class removed; benchmark scripts/configs emptied; test files cleaned up
+- [Sprint 12 Task 4 Rename](project_sprint12_task4_rename.md) — test_vmap.py renamed to test_episode_functions.py; vmap qualifier now redundant
+- [Sprint 13 Test Consolidation](project_sprint13_test_consolidation.md) — tests/ reduced to conftest.py + test_reproducibility.py; 5 old files deleted

@@ -133,9 +133,7 @@ class ContextualLinearBandit(Environment):
         self.key, subkey1, subkey2 = jax.random.split(self.key, 3)
 
         self._true_theta = sample_true_theta(subkey1, self.context_dim, self.param_norm_bound)
-        self._contexts = sample_contexts(
-            subkey2, self.num_steps, self.num_arms, self.context_dim, self.context_bound
-        )
+        self._contexts = sample_contexts(subkey2, self.num_steps, self.num_arms, self.context_dim, self.context_bound)
 
         self._current_t = 0
 

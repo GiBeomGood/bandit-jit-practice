@@ -2,7 +2,6 @@
 
 from typing import Optional, Tuple
 
-import jax
 import jax.numpy as jnp
 
 from src.algorithms.base import Algorithm
@@ -116,44 +115,6 @@ def compute_ucb_values(
     return mean_terms + radius_t * ellipsoid_norms
 
 
-def oful_select_action(
-    design_matrix_inv: jnp.ndarray,
-    sum_reward_context: jnp.ndarray,
-    contexts: jnp.ndarray,
-    t: int,
-    context_dim: int,
-    lambda_: float,
-    subgaussian_scale: float,
-    norm_bound: float,
-    context_bound: float,
-    delta: float,
-) -> jnp.ndarray:
-    """Select an action using OFUL strategy.
-
-    Computes θ̂ estimate, confidence radius, and UCB values to select the arm
-    with the highest upper confidence bound. JIT is applied at the call site.
-
-    Args:
-        design_matrix_inv: Inverse design matrix B_t^{-1}, shape (context_dim, context_dim)
-        sum_reward_context: Cumulative reward-context sum, shape (context_dim,)
-        contexts: Context vectors for all arms, shape (num_arms, context_dim)
-        t: Current time step (0-indexed)
-        context_dim: Feature dimension
-        lambda_: Ridge regularization parameter
-        subgaussian_scale: Sub-Gaussian variance proxy (R in OFUL paper)
-        norm_bound: Parameter norm bound (S in OFUL paper)
-        context_bound: Context norm bound (L in OFUL paper)
-        delta: Failure probability
-
-    Returns:
-        action: Index of selected arm (scalar int array)
-    """
-    theta_hat = compute_theta_hat(design_matrix_inv, sum_reward_context)
-    radius_t = compute_confidence_radius(t, context_dim, lambda_, subgaussian_scale, norm_bound, context_bound, delta)
-    ucb_values = compute_ucb_values(contexts, theta_hat, design_matrix_inv, radius_t)
-    return jnp.argmax(ucb_values)
-
-
 def oful_update(
     design_matrix_inv: jnp.ndarray,
     sum_reward_context: jnp.ndarray,
@@ -220,7 +181,10 @@ class OFUL(Algorithm):
         self.design_matrix_inv = None  # B_t^{-1}, shape (context_dim, context_dim)
         self.sum_reward_context = None  # Σ r_s x_s, shape (context_dim,)
         self.t = 0
-        self.key = jax.random.PRNGKey(seed if seed is not None else 0)
+
+    def _check_initialized(self) -> None:
+        if self.design_matrix_inv is None:
+            raise RuntimeError("Algorithm not initialized. Call reset() first.")
 
     def reset(self) -> None:
         """Reset algorithm state for a new episode."""
@@ -238,23 +202,15 @@ class OFUL(Algorithm):
         Returns:
             action: Selected arm index in [0, num_arms-1]
         """
-        if self.design_matrix_inv is None:
-            raise RuntimeError("Algorithm not initialized. Call reset() first.")
+        self._check_initialized()
 
-        return int(
-            oful_select_action(
-                self.design_matrix_inv,
-                self.sum_reward_context,
-                contexts,
-                self.t,
-                self.context_dim,
-                self.lambda_,
-                self.subgaussian_scale,
-                self.norm_bound,
-                self.context_bound,
-                self.delta,
-            )
+        theta_hat = compute_theta_hat(self.design_matrix_inv, self.sum_reward_context)
+        radius_t = compute_confidence_radius(
+            self.t, self.context_dim, self.lambda_,
+            self.subgaussian_scale, self.norm_bound, self.context_bound, self.delta,
         )
+        ucb_values = compute_ucb_values(contexts, theta_hat, self.design_matrix_inv, radius_t)
+        return int(jnp.argmax(ucb_values))
 
     def update(self, context: jnp.ndarray, reward: float) -> None:
         """Update algorithm state with observed feedback.
@@ -277,8 +233,7 @@ class OFUL(Algorithm):
         Returns:
             theta_hat: Current parameter estimate, shape (context_dim,)
         """
-        if self.design_matrix_inv is None:
-            raise RuntimeError("Algorithm not initialized. Call reset() first.")
+        self._check_initialized()
         return compute_theta_hat(self.design_matrix_inv, self.sum_reward_context)
 
     def _compute_radius(self, t: int) -> float:
