@@ -61,6 +61,8 @@ For each task, run a developer → code-reviewer cycle.
 
 After all tasks are APPROVED:
 
+> **Commit immediately**: Run `git add` and `git commit` before the session ends. Future worktrees branch from the latest commit — uncommitted sprint changes will be invisible to the next sprint's agents.
+
 1. **Update the spec**: In `spec/sprintN.md`, change the status field to `**Status**: Completed (YYYY-MM-DD)`.
 
 2. **Check deferred items**: For any todo file whose task was implemented and APPROVED in this sprint, update its frontmatter to `status: completed`. Leave unmatched open todos as-is — the sprint-planner will pick them up at the next sprint's startup.

@@ -1,5 +1,7 @@
 # Sprint 15: Algorithm File Cleanup and experiment.py Decoupling
 
+**Status**: Completed (2026-04-19)
+
 ## Sprint Goal
 
 Move all algorithm-specific code out of `experiment.py` into `oful.py` and `lts.py`. Eliminate cosmetic noise (`# ---` dividers) and API inconsistencies (manual key extraction, long parameter lists) across the codebase. After this sprint, `experiment.py` contains only orchestration logic.
