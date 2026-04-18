@@ -90,8 +90,8 @@ def test_experiment_runner_different_seeds_differ() -> None:
     algo = OmegaConf.to_container(cfg.algo, resolve=True)
     seed_base = exp.pop("seed")
 
-    runner_a = ExperimentRunner(**exp, algo_params=algo, seed=seed_base)
-    runner_b = ExperimentRunner(**exp, algo_params=algo, seed=seed_base + 1)
+    runner_a = ExperimentRunner(**exp, algo_cfg=algo, seed=seed_base)
+    runner_b = ExperimentRunner(**exp, algo_cfg=algo, seed=seed_base + 1)
 
     regrets_a = runner_a.run()["regrets"]
     regrets_b = runner_b.run()["regrets"]

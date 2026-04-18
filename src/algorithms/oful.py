@@ -1,91 +1,46 @@
 """OFUL (Optimism in the Face of Uncertainty for Linear bandits) algorithm."""
 
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import jax.numpy as jnp
 
 from src.algorithms.base import Algorithm
 
 
-def compute_confidence_radius(
-    t: int,
-    context_dim: int,
-    lambda_: float,
-    subgaussian_scale: float,
-    norm_bound: float,
-    context_bound: float,
-    delta: float,
-) -> jnp.ndarray:
-    """Compute confidence radius at time t.
+def compute_confidence_radius(t: int, context_dim: int, **kwargs) -> jnp.ndarray:
+    """Compute β_t = R*sqrt(d*log((1+t*L²/λ)/δ)) + sqrt(λ)*S.
 
-    β_t = subgaussian_scale * sqrt(context_dim * log((1 + t * context_bound² / λ) / δ))
-          + sqrt(λ) * norm_bound
+    Uses 1-indexed t to avoid log(0).
 
-    Args:
-        t: Current time step (0-indexed)
-        context_dim: Feature dimension
-        lambda_: Ridge regularization parameter
-        subgaussian_scale: Sub-Gaussian variance proxy (R in OFUL paper)
-        norm_bound: Parameter norm bound (S in OFUL paper, ||θ*|| ≤ norm_bound)
-        context_bound: Context norm bound (L in OFUL paper, ||x|| ≤ context_bound)
-        delta: Failure probability
+    Parameters
+    ----------
+    t : int
+        Current time step (0-indexed).
+    context_dim : int
+        Feature dimension d.
+    **kwargs
+        lambda_ : float
+            Ridge regularization parameter.
+        subgaussian_scale : float
+            Sub-Gaussian variance proxy (R in OFUL paper).
+        norm_bound : float
+            Parameter norm bound (S: ||θ*|| ≤ norm_bound).
+        context_bound : float
+            Context norm bound (L: ||x|| ≤ context_bound).
+        delta : float
+            Failure probability.
 
-    Returns:
-        radius: Confidence radius (scalar)
+    Returns
+    -------
+    jnp.ndarray
+        Confidence radius (scalar).
     """
-    # Use 1-indexed time to avoid log(0)
     t_1indexed = t + 1
-    log_arg = (1.0 + t_1indexed * (context_bound**2) / lambda_) / delta
-    radius = subgaussian_scale * jnp.sqrt(context_dim * jnp.log(log_arg)) + jnp.sqrt(lambda_) * norm_bound
-    return radius
-
-
-def compute_theta_hat(design_matrix_inv: jnp.ndarray, sum_reward_context: jnp.ndarray) -> jnp.ndarray:
-    """Compute parameter estimate θ̂ = B_t^{-1} * sum_reward_context.
-
-    Args:
-        design_matrix_inv: Inverse design matrix B_t^{-1}, shape (context_dim, context_dim)
-        sum_reward_context: Cumulative sum of reward * context, shape (context_dim,)
-
-    Returns:
-        theta_hat: Parameter estimate, shape (context_dim,)
-    """
-    return design_matrix_inv @ sum_reward_context
-
-
-def update_design_matrix_inv(design_matrix_inv: jnp.ndarray, context: jnp.ndarray) -> jnp.ndarray:
-    """Update inverse design matrix using Sherman-Morrison formula.
-
-    B_{t+1}^{-1} = B_t^{-1} - (B_t^{-1} x x^T B_t^{-1}) / (1 + x^T B_t^{-1} x)
-
-    This avoids explicit matrix inversion (O(d³)) in favor of O(d²) rank-1 update.
-
-    Args:
-        design_matrix_inv: Current inverse design matrix B_t^{-1}, shape (context_dim, context_dim)
-        context: Context vector x_t, shape (context_dim,)
-
-    Returns:
-        design_matrix_inv_new: Updated inverse design matrix, shape (context_dim, context_dim)
-    """
-    b_inv_x = design_matrix_inv @ context  # shape (context_dim,)
-    denom = 1.0 + context @ b_inv_x  # scalar, always > 0 since B^{-1} is PSD
-    return design_matrix_inv - jnp.outer(b_inv_x, b_inv_x) / denom
-
-
-def update_sum_reward_context(
-    sum_reward_context: jnp.ndarray, context: jnp.ndarray, reward: jnp.ndarray
-) -> jnp.ndarray:
-    """Update cumulative reward-context sum.
-
-    Args:
-        sum_reward_context: Current sum, shape (context_dim,)
-        context: Context vector, shape (context_dim,)
-        reward: Observed reward (scalar)
-
-    Returns:
-        sum_reward_context_new: Updated sum, shape (context_dim,)
-    """
-    return sum_reward_context + reward * context
+    log_arg = (1.0 + t_1indexed * (kwargs["context_bound"] ** 2) / kwargs["lambda_"]) / kwargs["delta"]
+    return (
+        kwargs["subgaussian_scale"] * jnp.sqrt(context_dim * jnp.log(log_arg))
+        + jnp.sqrt(kwargs["lambda_"]) * kwargs["norm_bound"]
+    )
 
 
 def compute_ucb_values(
@@ -94,24 +49,28 @@ def compute_ucb_values(
     design_matrix_inv: jnp.ndarray,
     radius_t: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Compute UCB values for all arms.
+    """Compute mean + radius * ||x||_{B^{-1}} for each arm.
 
-    Args:
-        contexts: Context vectors for all arms, shape (num_arms, context_dim)
-        theta_hat: Parameter estimate, shape (context_dim,)
-        design_matrix_inv: Inverse design matrix B_t^{-1}, shape (context_dim, context_dim)
-        radius_t: Confidence radius (scalar)
+    Parameters
+    ----------
+    contexts : jnp.ndarray
+        Context vectors for all arms, shape (num_arms, context_dim).
+    theta_hat : jnp.ndarray
+        Parameter estimate, shape (context_dim,).
+    design_matrix_inv : jnp.ndarray
+        Inverse design matrix B_t^{-1}, shape (context_dim, context_dim).
+    radius_t : jnp.ndarray
+        Confidence radius (scalar).
 
-    Returns:
-        ucb_values: UCB values for all arms, shape (num_arms,)
+    Returns
+    -------
+    jnp.ndarray
+        UCB values for all arms, shape (num_arms,).
     """
-    mean_terms = contexts @ theta_hat  # shape (num_arms,)
-
-    # Vectorized ellipsoid norm: ||x_a||_{B^{-1}} = sqrt(x_a^T B^{-1} x_a)
-    b_inv_x = contexts @ design_matrix_inv  # shape (num_arms, context_dim), symmetric B^{-1}
-    ellipsoid_norms_sq = jnp.sum(b_inv_x * contexts, axis=-1)  # shape (num_arms,)
+    mean_terms = contexts @ theta_hat
+    b_inv_x = contexts @ design_matrix_inv
+    ellipsoid_norms_sq = jnp.sum(b_inv_x * contexts, axis=-1)
     ellipsoid_norms = jnp.sqrt(jnp.maximum(ellipsoid_norms_sq, 0.0))
-
     return mean_terms + radius_t * ellipsoid_norms
 
 
@@ -121,24 +80,99 @@ def oful_update(
     context: jnp.ndarray,
     reward: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Update OFUL state with observed feedback.
+    """Apply Sherman-Morrison rank-1 update and accumulate the reward-context sum.
 
-    Applies Sherman-Morrison rank-1 update to the inverse design matrix and
-    accumulates the reward-context sum. JIT is applied at the call site.
+    Parameters
+    ----------
+    design_matrix_inv : jnp.ndarray
+        Current inverse design matrix B_t^{-1}, shape (context_dim, context_dim).
+    sum_reward_context : jnp.ndarray
+        Current cumulative reward-context sum, shape (context_dim,).
+    context : jnp.ndarray
+        Context vector of selected arm, shape (context_dim,).
+    reward : jnp.ndarray
+        Observed reward (scalar).
 
-    Args:
-        design_matrix_inv: Current inverse design matrix B_t^{-1}, shape (context_dim, context_dim)
-        sum_reward_context: Current cumulative reward-context sum, shape (context_dim,)
-        context: Context vector of selected arm, shape (context_dim,)
-        reward: Observed reward (scalar)
-
-    Returns:
-        design_matrix_inv_new: Updated inverse design matrix, shape (context_dim, context_dim)
-        sum_reward_context_new: Updated cumulative sum, shape (context_dim,)
+    Returns
+    -------
+    Tuple[jnp.ndarray, jnp.ndarray]
+        Updated (design_matrix_inv, sum_reward_context).
     """
-    design_matrix_inv_new = update_design_matrix_inv(design_matrix_inv, context)
-    sum_reward_context_new = update_sum_reward_context(sum_reward_context, context, reward)
+    b_inv_x = design_matrix_inv @ context
+    denom = 1.0 + context @ b_inv_x
+    design_matrix_inv_new = design_matrix_inv - jnp.outer(b_inv_x, b_inv_x) / denom
+    sum_reward_context_new = sum_reward_context + reward * context
     return design_matrix_inv_new, sum_reward_context_new
+
+
+def oful_init_carry(context_dim: int, **kwargs) -> tuple:
+    """Create the initial carry for the OFUL scan loop.
+
+    Parameters
+    ----------
+    context_dim : int
+        Feature dimension d.
+    **kwargs
+        lambda_ : float
+            Ridge regularization parameter; B_0 = λI so B_0^{-1} = (1/λ)I.
+
+    Returns
+    -------
+    tuple
+        (design_matrix_inv, sum_reward_context, cumulative_regret) where
+        design_matrix_inv has shape (d, d), sum_reward_context has shape (d,),
+        and cumulative_regret is a scalar 0.0.
+    """
+    init_design_matrix_inv = (1.0 / kwargs["lambda_"]) * jnp.eye(context_dim)
+    init_sum_reward_context = jnp.zeros(context_dim)
+    return (init_design_matrix_inv, init_sum_reward_context, jnp.array(0.0))
+
+
+def make_oful_step_fn(context_dim: int, true_theta: jnp.ndarray, **kwargs) -> Callable:
+    """Create the per-step closure for the OFUL scan loop.
+
+    Parameters
+    ----------
+    context_dim : int
+        Feature dimension.
+    true_theta : jnp.ndarray
+        True parameter vector, shape (context_dim,).
+    **kwargs
+        lambda_ : float
+            Ridge regularization parameter.
+        subgaussian_scale : float
+            Sub-Gaussian variance proxy (R in OFUL paper).
+        norm_bound : float
+            Parameter norm bound (S: ||θ*|| ≤ norm_bound).
+        context_bound : float
+            Context norm bound (L: ||x|| ≤ context_bound).
+        delta : float
+            Failure probability.
+
+    Returns
+    -------
+    Callable
+        step_fn(carry, x) compatible with jax.lax.scan.
+    """
+    def step_fn(carry: tuple, x: tuple) -> tuple:
+        """Execute one OFUL step: select action via UCB, observe reward, update state."""
+        design_matrix_inv, sum_reward_context, cumulative_regret = carry
+        contexts_t, noise_t, t_idx = x
+
+        theta_hat = design_matrix_inv @ sum_reward_context
+        radius_t = compute_confidence_radius(t_idx, context_dim, **kwargs)
+        action = jnp.argmax(compute_ucb_values(contexts_t, theta_hat, design_matrix_inv, radius_t))
+
+        arm_values = contexts_t @ true_theta
+        best_arm = jnp.argmax(arm_values)
+        reward = arm_values[action] + noise_t
+        regret_t = arm_values[best_arm] - arm_values[action]
+        new_cumulative_regret = cumulative_regret + regret_t
+
+        new_dm_inv, new_src = oful_update(design_matrix_inv, sum_reward_context, contexts_t[action], reward)
+        return (new_dm_inv, new_src, new_cumulative_regret), new_cumulative_regret
+
+    return step_fn
 
 
 class OFUL(Algorithm):
@@ -161,14 +195,22 @@ class OFUL(Algorithm):
     ):
         """Initialize OFUL algorithm.
 
-        Args:
-            context_dim: Feature dimension
-            lambda_: Ridge regularization parameter (B_t = λI + Σ x_s x_s^T)
-            subgaussian_scale: Sub-Gaussian variance proxy (R in OFUL paper)
-            norm_bound: Parameter norm bound (S: ||θ*|| ≤ norm_bound)
-            context_bound: Context norm bound (L: ||x|| ≤ context_bound)
-            delta: Failure probability (confidence parameter)
-            seed: Random seed for reproducibility
+        Parameters
+        ----------
+        context_dim : int
+            Feature dimension.
+        lambda_ : float
+            Ridge regularization parameter (B_t = λI + Σ x_s x_s^T).
+        subgaussian_scale : float
+            Sub-Gaussian variance proxy (R in OFUL paper).
+        norm_bound : float
+            Parameter norm bound (S: ||θ*|| ≤ norm_bound).
+        context_bound : float
+            Context norm bound (L: ||x|| ≤ context_bound).
+        delta : float
+            Failure probability (confidence parameter).
+        seed : int, optional
+            Random seed for reproducibility.
         """
         super().__init__(context_dim, seed)
         self.lambda_ = lambda_
@@ -177,18 +219,17 @@ class OFUL(Algorithm):
         self.context_bound = context_bound
         self.delta = delta
 
-        # State initialized in reset()
-        self.design_matrix_inv = None  # B_t^{-1}, shape (context_dim, context_dim)
-        self.sum_reward_context = None  # Σ r_s x_s, shape (context_dim,)
+        self.design_matrix_inv = None
+        self.sum_reward_context = None
         self.t = 0
 
     def _check_initialized(self) -> None:
+        """Raise RuntimeError if reset() has not been called yet."""
         if self.design_matrix_inv is None:
             raise RuntimeError("Algorithm not initialized. Call reset() first.")
 
     def reset(self) -> None:
         """Reset algorithm state for a new episode."""
-        # B_0 = λI → B_0^{-1} = (1/λ) I
         self.design_matrix_inv = (1.0 / self.lambda_) * jnp.eye(self.context_dim)
         self.sum_reward_context = jnp.zeros(self.context_dim)
         self.t = 0
@@ -196,28 +237,38 @@ class OFUL(Algorithm):
     def select_action(self, contexts: jnp.ndarray) -> int:
         """Select an action using the OFUL strategy.
 
-        Args:
-            contexts: Context vectors for all arms, shape (num_arms, context_dim)
+        Parameters
+        ----------
+        contexts : jnp.ndarray
+            Context vectors for all arms, shape (num_arms, context_dim).
 
-        Returns:
-            action: Selected arm index in [0, num_arms-1]
+        Returns
+        -------
+        int
+            Selected arm index in [0, num_arms-1].
         """
         self._check_initialized()
-
-        theta_hat = compute_theta_hat(self.design_matrix_inv, self.sum_reward_context)
-        radius_t = compute_confidence_radius(
-            self.t, self.context_dim, self.lambda_,
-            self.subgaussian_scale, self.norm_bound, self.context_bound, self.delta,
-        )
+        theta_hat = self.design_matrix_inv @ self.sum_reward_context
+        algo_kwargs = {
+            "lambda_": self.lambda_,
+            "subgaussian_scale": self.subgaussian_scale,
+            "norm_bound": self.norm_bound,
+            "context_bound": self.context_bound,
+            "delta": self.delta,
+        }
+        radius_t = compute_confidence_radius(self.t, self.context_dim, **algo_kwargs)
         ucb_values = compute_ucb_values(contexts, theta_hat, self.design_matrix_inv, radius_t)
         return int(jnp.argmax(ucb_values))
 
     def update(self, context: jnp.ndarray, reward: float) -> None:
         """Update algorithm state with observed feedback.
 
-        Args:
-            context: Context vector of selected arm, shape (context_dim,)
-            reward: Observed reward (scalar)
+        Parameters
+        ----------
+        context : jnp.ndarray
+            Context vector of selected arm, shape (context_dim,).
+        reward : float
+            Observed reward (scalar).
         """
         self.design_matrix_inv, self.sum_reward_context = oful_update(
             self.design_matrix_inv,
@@ -227,44 +278,18 @@ class OFUL(Algorithm):
         )
         self.t += 1
 
-    def get_theta_hat(self) -> jnp.ndarray:
-        """Return current parameter estimate θ̂ = B_t^{-1} Σ r_s x_s.
-
-        Returns:
-            theta_hat: Current parameter estimate, shape (context_dim,)
-        """
-        self._check_initialized()
-        return compute_theta_hat(self.design_matrix_inv, self.sum_reward_context)
-
-    def _compute_radius(self, t: int) -> float:
-        """Compute confidence radius at time t.
-
-        Args:
-            t: Current time step (0-indexed)
-
-        Returns:
-            radius: Confidence radius (scalar)
-        """
-        return float(
-            compute_confidence_radius(
-                t,
-                self.context_dim,
-                self.lambda_,
-                self.subgaussian_scale,
-                self.norm_bound,
-                self.context_bound,
-                self.delta,
-            )
-        )
-
     def _compute_ellipsoid_norm(self, context: jnp.ndarray) -> float:
         """Compute ||x||_{B_t^{-1}} = sqrt(x^T B_t^{-1} x).
 
-        Args:
-            context: Context vector, shape (context_dim,)
+        Parameters
+        ----------
+        context : jnp.ndarray
+            Context vector, shape (context_dim,).
 
-        Returns:
-            ellipsoid_norm: Scalar value ||x||_{B_t^{-1}}
+        Returns
+        -------
+        float
+            Scalar value ||x||_{B_t^{-1}}.
         """
         b_inv_x = self.design_matrix_inv @ context
         norm_sq = jnp.maximum(context @ b_inv_x, 0.0)

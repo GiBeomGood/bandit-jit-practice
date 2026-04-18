@@ -8,12 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
 
-from src.algorithms.oful import (
-    compute_confidence_radius,
-    compute_theta_hat,
-    compute_ucb_values,
-    oful_update,
-)
+from src.algorithms.oful import make_oful_step_fn, oful_init_carry
 from src.environments.contextual_linear import (
     sample_contexts,
     sample_true_theta,
@@ -25,15 +20,13 @@ def run_episode_scan(
     context_dim: int,
     num_arms: int,
     num_steps: int,
-    context_bound: float,
-    lambda_: float,
-    subgaussian_scale: float,
-    norm_bound: float,
-    delta: float,
+    **kwargs,
 ) -> jnp.ndarray:
-    """Run a single episode using jax.lax.scan for the step loop.
+    """Run a single OFUL episode using jax.lax.scan for the step loop.
 
     Pure function: all randomness is derived from seed. Compatible with jax.vmap.
+    All environment and algorithm hyperparameters flow through **kwargs so that
+    context_bound reaches compute_confidence_radius inside make_oful_step_fn.
 
     Parameters
     ----------
@@ -45,16 +38,9 @@ def run_episode_scan(
         Number of arms.
     num_steps : int
         Episode length (time steps).
-    context_bound : float
-        Context norm bound.
-    lambda_ : float
-        Ridge regularization parameter.
-    subgaussian_scale : float
-        Sub-Gaussian variance proxy.
-    norm_bound : float
-        Parameter norm bound (||θ*|| ≤ norm_bound).
-    delta : float
-        Failure probability.
+    **kwargs
+        All hyperparameters: context_bound, lambda_, subgaussian_scale,
+        norm_bound, delta. Passed as-is to oful_init_carry and make_oful_step_fn.
 
     Returns
     -------
@@ -64,49 +50,12 @@ def run_episode_scan(
     key = jax.random.PRNGKey(seed)
     key, k_theta, k_ctx, k_noise = jax.random.split(key, 4)
 
-    true_theta = sample_true_theta(k_theta, context_dim, norm_bound)
-    contexts = sample_contexts(k_ctx, num_steps, num_arms, context_dim, context_bound)
+    true_theta = sample_true_theta(k_theta, context_dim, kwargs["norm_bound"])
+    contexts = sample_contexts(k_ctx, num_steps, num_arms, context_dim, kwargs["context_bound"])
     noises = jax.random.normal(k_noise, shape=(num_steps,))
 
-    # Initial OFUL state: B_0 = λI → B_0^{-1} = (1/λ)I
-    init_design_matrix_inv = (1.0 / lambda_) * jnp.eye(context_dim)
-    init_sum_reward_context = jnp.zeros(context_dim)
-    init_carry = (init_design_matrix_inv, init_sum_reward_context, jnp.array(0.0))
-
-    def step_fn(carry: tuple, x: tuple) -> tuple:
-        """Execute one bandit step within the scan loop.
-
-        Parameters
-        ----------
-        carry : tuple
-            (design_matrix_inv, sum_reward_context, cumulative_regret).
-        x : tuple
-            (contexts_t, noise_t, t_idx) for this step.
-
-        Returns
-        -------
-        tuple
-            (new_carry, cumulative_regret) where new_carry is the updated
-            (design_matrix_inv, sum_reward_context, cumulative_regret).
-        """
-        design_matrix_inv, sum_reward_context, cumulative_regret = carry
-        contexts_t, noise_t, t_idx = x
-
-        theta_hat = compute_theta_hat(design_matrix_inv, sum_reward_context)
-        radius_t = compute_confidence_radius(
-            t_idx, context_dim, lambda_, subgaussian_scale, norm_bound, context_bound, delta,
-        )
-        action = jnp.argmax(compute_ucb_values(contexts_t, theta_hat, design_matrix_inv, radius_t))
-
-        arm_values = contexts_t @ true_theta  # (num_arms,)
-        best_arm = jnp.argmax(arm_values)
-        reward = arm_values[action] + noise_t
-        regret_t = arm_values[best_arm] - arm_values[action]
-        new_cumulative_regret = cumulative_regret + regret_t
-
-        new_dm_inv, new_src = oful_update(design_matrix_inv, sum_reward_context, contexts_t[action], reward)
-
-        return (new_dm_inv, new_src, new_cumulative_regret), new_cumulative_regret
+    init_carry = oful_init_carry(context_dim, **kwargs)
+    step_fn = make_oful_step_fn(context_dim, true_theta, **kwargs)
 
     xs = (contexts, noises, jnp.arange(num_steps))
     _, cumulative_regrets = jax.lax.scan(step_fn, init_carry, xs)
@@ -118,11 +67,7 @@ def run_episodes(
     context_dim: int,
     num_arms: int,
     num_steps: int,
-    context_bound: float,
-    lambda_: float,
-    subgaussian_scale: float,
-    norm_bound: float,
-    delta: float,
+    **kwargs,
 ) -> jnp.ndarray:
     """Run multiple episodes in parallel using jax.jit(jax.vmap(...)).
 
@@ -136,16 +81,9 @@ def run_episodes(
         Number of arms.
     num_steps : int
         Episode length (time steps).
-    context_bound : float
-        Context norm bound.
-    lambda_ : float
-        Ridge regularization parameter.
-    subgaussian_scale : float
-        Sub-Gaussian variance proxy.
-    norm_bound : float
-        Parameter norm bound.
-    delta : float
-        Failure probability.
+    **kwargs
+        All hyperparameters forwarded to run_episode_scan (context_bound,
+        lambda_, subgaussian_scale, norm_bound, delta).
 
     Returns
     -------
@@ -157,11 +95,7 @@ def run_episodes(
         context_dim=context_dim,
         num_arms=num_arms,
         num_steps=num_steps,
-        context_bound=context_bound,
-        lambda_=lambda_,
-        subgaussian_scale=subgaussian_scale,
-        norm_bound=norm_bound,
-        delta=delta,
+        **kwargs,
     )
     compiled_fn = jax.jit(jax.vmap(episode_fn))
     return compiled_fn(seeds)
@@ -172,33 +106,33 @@ class ExperimentRunner:
 
     def __init__(
         self,
-        num_episodes: int,
         context_dim: int,
         num_arms: int,
         num_steps: int,
+        num_episodes: int,
         context_bound: float = 1.0,
-        algo_params: Dict[str, Any] = None,
         seed: int = None,
+        algo_cfg: Dict[str, Any] = None,
     ):
         """Initialize experiment runner.
 
         Parameters
         ----------
-        num_episodes : int
-            Number of episodes to run.
         context_dim : int
             Feature dimension.
         num_arms : int
             Number of arms.
         num_steps : int
             Episode length (time steps per episode).
+        num_episodes : int
+            Number of episodes to run.
         context_bound : float
             Context norm bound.
-        algo_params : dict, optional
-            Dictionary of algorithm parameters
-            (lambda_, subgaussian_scale, norm_bound, delta for OFUL).
         seed : int, optional
             Random seed for reproducibility.
+        algo_cfg : dict, optional
+            Algorithm hyperparameters dict passed as-is from the algo config section.
+            Keys: lambda_, subgaussian_scale, norm_bound, delta.
         """
         self.num_episodes = num_episodes
         self.context_dim = context_dim
@@ -206,34 +140,25 @@ class ExperimentRunner:
         self.num_steps = num_steps
         self.context_bound = context_bound
         self.seed = seed
+        self.algo_cfg = algo_cfg if algo_cfg is not None else {}
 
-        if algo_params is None:
-            algo_params = {}
-        self.algo_params = {
-            "lambda_": algo_params.get("lambda_", 1.0),
-            "subgaussian_scale": algo_params.get("subgaussian_scale", 1.0),
-            "norm_bound": algo_params.get("norm_bound", 1.0),
-            "delta": algo_params.get("delta", 0.01),
-        }
-
-        _episode_fn = functools.partial(
+        merged_kwargs = {**self.algo_cfg, "context_bound": context_bound}
+        episode_fn = functools.partial(
             run_episode_scan,
             context_dim=context_dim,
             num_arms=num_arms,
             num_steps=num_steps,
-            context_bound=context_bound,
-            **self.algo_params,
+            **merged_kwargs,
         )
-        self._compiled_run = jax.jit(jax.vmap(_episode_fn))
+        self._compiled_run = jax.jit(jax.vmap(episode_fn))
 
     @classmethod
     def from_yaml(cls, config_path: str) -> "ExperimentRunner":
         """Construct an ExperimentRunner from a YAML config file.
 
-        Reads the ``experiment`` and ``algo`` sections of the YAML. The
-        ``experiment`` section must contain ``context_dim``, ``num_arms``,
-        ``num_steps``, and ``num_episodes``. Optional keys are
-        ``context_bound`` and ``seed``.
+        Reads the ``experiment`` and ``algo`` sections of the YAML and passes
+        them as-is. No individual key extraction — the YAML is the single
+        source of truth for all hyperparameters.
 
         Parameters
         ----------
@@ -246,10 +171,9 @@ class ExperimentRunner:
             Fully configured ``ExperimentRunner`` instance.
         """
         cfg = OmegaConf.load(config_path)
-        exp = OmegaConf.to_container(cfg.experiment, resolve=True)
-        algo = OmegaConf.to_container(cfg.algo, resolve=True)
-
-        return cls(**exp, algo_params=algo)
+        exp_cfg = OmegaConf.to_container(cfg.experiment, resolve=True)
+        algo_cfg = OmegaConf.to_container(cfg.algo, resolve=True)
+        return cls(**exp_cfg, algo_cfg=algo_cfg)
 
     def run(self) -> Dict[str, Any]:
         """Run the experiment over multiple episodes using jax.jit(jax.vmap(...)).
@@ -276,7 +200,7 @@ class ExperimentRunner:
                 "num_arms": self.num_arms,
                 "num_steps": self.num_steps,
                 "context_bound": self.context_bound,
-                "algo_params": self.algo_params,
+                "algo_cfg": self.algo_cfg,
                 "seed": self.seed,
             },
             "metadata": {
