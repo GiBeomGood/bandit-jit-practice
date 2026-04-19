@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 from omegaconf import OmegaConf
 
-from src.algorithms.oful import make_oful_step_fn, oful_init_carry
+from src.algorithms import OFUL
 from src.environments.contextual_linear import (
     sample_contexts,
     sample_true_theta,
@@ -26,7 +26,7 @@ def run_episode_scan(
 
     Pure function: all randomness is derived from seed. Compatible with jax.vmap.
     All environment and algorithm hyperparameters flow through **kwargs so that
-    context_bound reaches compute_confidence_radius inside make_oful_step_fn.
+    context_bound reaches OFUL.compute_confidence_radius inside OFUL.make_step_fn.
 
     Parameters
     ----------
@@ -40,7 +40,7 @@ def run_episode_scan(
         Episode length (time steps).
     **kwargs
         All hyperparameters: context_bound, lambda_, subgaussian_scale,
-        norm_bound, delta. Passed as-is to oful_init_carry and make_oful_step_fn.
+        norm_bound, delta. Passed as-is to OFUL.make_init_carry and OFUL.make_step_fn.
 
     Returns
     -------
@@ -54,8 +54,8 @@ def run_episode_scan(
     contexts = sample_contexts(k_ctx, num_steps, num_arms, context_dim, kwargs["context_bound"])
     noises = jax.random.normal(k_noise, shape=(num_steps,))
 
-    init_carry = oful_init_carry(context_dim, **kwargs)
-    step_fn = make_oful_step_fn(context_dim, true_theta, **kwargs)
+    init_carry = OFUL.make_init_carry(context_dim, **kwargs)
+    step_fn = OFUL.make_step_fn(context_dim, true_theta, **kwargs)
 
     xs = (contexts, noises, jnp.arange(num_steps))
     _, cumulative_regrets = jax.lax.scan(step_fn, init_carry, xs)

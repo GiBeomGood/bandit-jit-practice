@@ -3,3 +3,5 @@
 - [Sprint 12 Task 2 — Reproducibility and Minimal Config](project_sprint12_task2.md) — Seeding strategy, minimal.yaml spec, and reproducibility test structure
 - [Sprint 12 Task 3 — Delete Unused Code](project_sprint12_task3.md) — "Emptied to stub" is not "deleted"; 6 files must be physically removed
 - [Sprint 12 Task 4 — Rename Files](project_sprint12_task4.md) — test_vmap.py → test_episode_functions.py; jax/vmap/jit in code bodies is OK, only filename qualifiers must go
+- [Sprint 16 Task 1 — Algorithm Class Consolidation](project_sprint16_task1.md) — staticmethod interface pattern; **kwargs annotation gaps are pre-existing, not new violations
+- [Sprint 16 Task 2 — experiment.py import update](project_sprint16_task2.md) — Single-line fix: import OFUL via package __init__, not submodule path
